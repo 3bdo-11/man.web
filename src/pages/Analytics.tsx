@@ -7,9 +7,9 @@ import { Skeleton } from '../components/ui/Skeleton.tsx';
 
 export default function Analytics({ settings }: Readonly<{ settings: UserSettings | null }>) {
   const {
-    loading, periodType, setPeriodType, periodOffset,
+    loading, periodType, setPeriodType,
     canGoBack, canGoForward, periodLabel, onPrev, onNext,
-      summarize, isPeriodComplete, activeData, dailyData,
+      summarize, activeData, dailyData,
       hasData,
   } = useAnalyticsData(settings);
 
@@ -57,11 +57,10 @@ export default function Analytics({ settings }: Readonly<{ settings: UserSetting
         <SummarizeSection
           data={summarize}
           periodType={periodType}
-          isPeriodComplete={isPeriodComplete}
           periodLabel={periodLabel}
           activeData={activeData}
           allData={dailyData}
-          relapseTarget={settings?.relapse_daily_target || 2}
+          relapseTarget={settings?.relapse_daily_target ?? 2}
           firstWeekday={settings?.firstWeekday ?? 6}
         />
       ) : (
@@ -71,10 +70,11 @@ export default function Analytics({ settings }: Readonly<{ settings: UserSetting
           </div>
           <div className="space-y-1">
             <p className="text-sm font-bold text-slate-900">No data yet</p>
+            <p className="text-[11px] font-medium text-slate-400">Log your first day in the Daily tab to see insights here.</p>
           </div>
           <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-2xl">
             <Target size={14} className="text-slate-400" />
-            <span className="text-[10px] font-semibold text-slate-400">Go to Daily tab to log your first entry</span>
+            <span className="text-[10px] font-semibold text-slate-400">Start tracking in Daily tab</span>
           </div>
         </div>
       )}

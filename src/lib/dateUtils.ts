@@ -1,4 +1,4 @@
-import { isValid, subHours, format, startOfWeek, endOfWeek, startOfDay } from 'date-fns';
+import { isValid, subHours, format, startOfWeek, endOfWeek, startOfDay, parseISO } from 'date-fns';
 
 /**
  * Safely parses any date-like value into a valid Date object.
@@ -11,10 +11,21 @@ export function safeParseDate(val: unknown): Date {
 
   if (val instanceof Date) {
     date = val;
-  } else if (typeof val === 'string' || typeof val === 'number') {
+  } else if (typeof val === 'string') {
+    date = parseISO(val);
+  } else if (typeof val === 'number') {
     date = new Date(val);
+  } else if (typeof val === 'object' && val !== null) {
+    const obj = val as Record<string, unknown>;
+    if (typeof obj.toDate === 'function') {
+      date = obj.toDate();
+    } else if (typeof obj.seconds === 'number') {
+      date = new Date((obj.seconds as number) * 1000);
+    } else {
+      date = new Date(String(val));
+    }
   } else {
-    date = new Date(val as string | number);
+    date = new Date(String(val));
   }
 
   if (!isValid(date)) {

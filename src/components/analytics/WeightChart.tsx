@@ -24,7 +24,7 @@ export const WeightChart = React.memo(function WeightChart({ data }: { data: Cha
           <XAxis dataKey="label" tick={TICK_STYLE} axisLine={false} tickLine={false} />
           <YAxis domain={['dataMin - 0.5', 'dataMax + 0.5']} tick={TICK_STYLE} axisLine={false} tickLine={false} width={28} />
           <Tooltip contentStyle={TOOLTIP_STYLE} />
-          <Line type="monotone" dataKey="weight" stroke="#3b82f6" strokeWidth={2} dot={DOT_PROPS} activeDot={ACTIVE_DOT_PROPS} connectNulls />
+          <Line type="monotone" dataKey="weight" stroke="#3b82f6" strokeWidth={2} dot={DOT_PROPS} activeDot={ACTIVE_DOT_PROPS} />
         </LineChart>
       </ResponsiveContainer>
     </div>

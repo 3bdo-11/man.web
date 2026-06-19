@@ -2,15 +2,14 @@ import { useState, useEffect, useMemo, useRef, useReducer } from 'react';
 import { motion } from 'motion/react';
 import { useSearchParams } from 'react-router-dom';
 import { format, subDays, addDays, isSameDay, isBefore, startOfDay, parse } from 'date-fns';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Smartphone } from 'lucide-react';
 import { offlineDb } from '../lib/offlineDb.ts';
-import { PRAYER_DISPLAY } from '../lib/adhan.ts';
 import { usePrayerTimes } from '../hooks/usePrayerTimes.ts';
-import { AppUsage, PrayerLog, PrayerName, RelapseEvent, TrainingLog, DailyLog, UserSettings } from '../types.ts';
+import { AppUsage, PrayerLog, RelapseEvent, TrainingLog, DailyLog, UserSettings } from '../types.ts';
 import { getBehavioralToday, getLogicalDateStr } from '../lib/dateUtils.ts';
 import { cn } from '../lib/cn.ts';
 import { calculateDailyScore, getScoreLevel, getScoreInterpretation } from '../lib/scoring.ts';
-import { useScreenTime } from '../hooks/useScreenTime.ts';
+
 
 import RelapseSection  from '../components/daily/RelapseSection.tsx';
 import PrayerSection   from '../components/daily/PrayerSection.tsx';
@@ -58,12 +57,6 @@ function formatHour(h: number): string {
   return `${h - 12}PM`;
 }
 
-function getNextActionColor(action: string): string {
-  if (action.includes('✓')) return 'text-emerald-600';
-  if (action.includes('due')) return 'text-amber-600';
-  return 'text-slate-600';
-}
-
 function shouldAnimate(dateStr: string, animPlayed: { current: boolean }): boolean {
   const key = `man_anim_score_${dateStr}`;
   if (sessionStorage.getItem(key)) return false;
@@ -93,26 +86,28 @@ export default function DailyTracking({ settings }: Props) {
   const parsedDate = dateParam ? parse(dateParam, 'yyyy-MM-dd', new Date()) : null;
   const initialDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : getBehavioralToday(boundaryHour);
 
+  const initialCached = offlineDb.getCachedDay(getLogicalDateStr(initialDate));
+  console.log('[DailyTracking] Initial cached data for', getLogicalDateStr(initialDate), ':', initialCached?.total_screen_minutes, initialCached ? 'exists' : 'null');
+
   const [state, dispatch] = useReducer(dailyReducer, {
     viewDate: initialDate,
-    relapses: [],
-    prayers: {},
-    trainings: [],
-    weightInput: '',
-    dailyLog: null,
-    appUsages: [],
-    qadaCount: 0,
+    relapses: initialCached?.relapses ?? [],
+    prayers: initialCached?.prayers ?? {},
+    trainings: initialCached?.trainings ?? [],
+    weightInput: initialCached?.weight != null ? String(initialCached.weight) : '',
+    dailyLog: initialCached ? {
+      date: initialCached.dateStr,
+      total_screen_minutes: initialCached.total_screen_minutes,
+      updated_at: initialCached.updated_at,
+      qada_count: initialCached.qada_count,
+    } : null,
+    appUsages: initialCached?.app_usages || [],
+    qadaCount: initialCached?.qada_count ?? 0,
   });
 
   const { viewDate, relapses, prayers, trainings, weightInput, dailyLog, appUsages, qadaCount } = state;
   const dateStr = getLogicalDateStr(viewDate);
-
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 10000);
-    return () => clearInterval(id);
-  }, []);
-
+  console.log('[DailyTracking] Render with dailyLog:', dailyLog?.total_screen_minutes, 'dateStr:', dateStr);
   const prayerTimes = usePrayerTimes(viewDate);
 
   const scoreData = useMemo(
@@ -127,7 +122,7 @@ export default function DailyTracking({ settings }: Props) {
     const withWeight = logs.filter(l => l.weight != null);
     if (withWeight.length === 0) return undefined;
     withWeight.sort((a, b) => b.dateStr.localeCompare(a.dateStr));
-    return withWeight[0].weight;
+    return withWeight[0].weight ?? undefined;
   }, [dateStr]);
 
   const { topApps, totalUniqueApps } = useMemo(() => {
@@ -145,7 +140,9 @@ export default function DailyTracking({ settings }: Props) {
 
   useEffect(() => {
     if (!dateStr) return;
+    console.log('[DailyTracking] Subscribing to day:', dateStr);
     return offlineDb.subscribeToDay(dateStr, (data) => {
+      console.log('[DailyTracking] subscribeToDay callback fired with total_screen_minutes:', data.total_screen_minutes, 'for date:', dateStr);
       dispatch({
         type: 'SET_DAY_DATA',
         payload: {
@@ -171,24 +168,15 @@ export default function DailyTracking({ settings }: Props) {
     [viewDate, boundaryHour]
   );
 
+  const canGoBack = useMemo(() => {
+    const allLogs = offlineDb.getAllLogs();
+    return allLogs.some(l => l.dateStr < dateStr);
+  }, [dateStr]);
+
   const canGoForward = useMemo(
     () => isBefore(startOfDay(viewDate), startOfDay(getBehavioralToday(boundaryHour))),
     [viewDate, boundaryHour]
   );
-
-  useScreenTime(dateStr, isEffectiveToday);
-
-  const nextAction = useMemo(() => {
-    const now = new Date();
-    const mandatory: PrayerName[] = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
-    for (const name of mandatory) {
-      const time = prayerTimes[name];
-      if (!time || prayers[name]?.status === 'prayed') continue;
-      if (now >= time) return `${PRAYER_DISPLAY[name]} is due — tap to log`;
-      return `Next: ${PRAYER_DISPLAY[name]} at ${format(time, 'hh:mm a')}`;
-    }
-    return "All prayers done. Mark complete when ready.";
-  }, [prayers, prayerTimes, viewDate, tick]);
 
   const scoreLevel = getScoreLevel(dailyScore);
   const colorMap = { high: 'text-emerald-500', mid: 'text-amber-500', low: 'text-red-400', critical: 'text-slate-500' } as const;
@@ -216,10 +204,11 @@ export default function DailyTracking({ settings }: Props) {
       {/* ── HEADER: Date nav + Score badge + Progress ── */}
       <section className="card bg-white border-slate-100 shadow-sm">
         <div className="flex items-center justify-between">
-          <button
+          <button type="button"
             onClick={() => dispatch({ type: 'SET_VIEW_DATE', date: subDays(viewDate, 1) })}
+            disabled={!canGoBack}
             aria-label="Previous Day"
-            className="p-2 rounded-full active:scale-75 touch-manipulation transition-transform hover:bg-slate-50 -ml-1"
+            className="p-2 rounded-full active:scale-75 touch-manipulation transition-transform hover:bg-slate-50 -ml-1 disabled:opacity-20 disabled:active:scale-100"
           >
             <ChevronLeft size={18} />
           </button>
@@ -234,7 +223,7 @@ export default function DailyTracking({ settings }: Props) {
           </div>
 
           <div className="flex items-center gap-1">
-            <button
+            <button type="button"
               onClick={() => dispatch({ type: 'SET_VIEW_DATE', date: addDays(viewDate, 1) })}
               disabled={!canGoForward}
               aria-label="Next Day"
@@ -261,7 +250,7 @@ export default function DailyTracking({ settings }: Props) {
         <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
           <div className="flex items-baseline gap-3">
             <span className={cn('text-3xl font-black tracking-tighter tabular-nums', scoreColor)}>
-              {dailyScore}
+              {displayScore}
             </span>
             <span className={cn('text-[10px] font-semibold uppercase tracking-widest', scoreColor)}>
               {getScoreInterpretation(dailyScore)}
@@ -328,41 +317,107 @@ export default function DailyTracking({ settings }: Props) {
         weightInput={weightInput}
         lastKnownWeight={lastKnownWeight}
         onWeightChange={(val) => dispatch({ type: 'SET_WEIGHT', value: val })}
-        onWeightSave={(val) => offlineDb.saveWeight(dateStr, val)}
+        onWeightSave={(val) => offlineDb.saveWeight(dateStr, Number(val))}
       />
 
       {/* ── SCREEN TIME ── */}
       <section className="space-y-3">
         <h2 className="section-header">Screen Time</h2>
-        <div className="card bg-white border-slate-100 shadow-sm space-y-4">
-          <div className="flex items-center gap-4">
-            <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-slate-900 tabular-nums tracking-tighter">
-                {dailyLog?.total_screen_minutes ?? 0}
-              </span>
-              <span className="text-xs font-semibold text-slate-400">min</span>
-            </div>
-            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
-              {isEffectiveToday ? 'Today' : format(viewDate, 'MMM d')}
-            </span>
-          </div>
-          {topApps.length > 0 && (
-            <div className="border-t border-slate-100 pt-4 space-y-2">
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-widest">Top Apps</p>
-              <div className="space-y-1.5">
-                {topApps.map((app) => (
-                  <div key={app.appName + '-' + app.minutes} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-                      <span className="text-xs font-semibold text-slate-700">{app.appName}</span>
-                    </div>
-                    <span className="text-xs font-bold text-slate-500 tabular-nums">{app.minutes}m</span>
+        <div className="card bg-white border-slate-100 shadow-sm">
+          {dailyLog ? (
+            <div className="space-y-5">
+              <div className="flex items-center gap-5">
+                <div className="relative w-20 h-20 shrink-0">
+                  <svg className="w-20 h-20 -rotate-90" viewBox="0 0 72 72">
+                    <circle cx="36" cy="36" r="30" fill="none" stroke="#e2e8f0" strokeWidth="5" />
+                    <circle cx="36" cy="36" r="30" fill="none" strokeWidth="5" strokeLinecap="round"
+                      className={(dailyLog.total_screen_minutes ?? 0) <= (settings?.screen_time_target ?? 60) ? 'stroke-emerald-400' : 'stroke-red-400'}
+                      strokeDasharray={`${2 * Math.PI * 30}`}
+                      strokeDashoffset={`${2 * Math.PI * 30 * (1 - Math.min(1, (dailyLog.total_screen_minutes ?? 0) / (settings?.screen_time_target ?? 60)))}`}
+                      style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-lg font-black text-slate-900 tabular-nums leading-none">
+                      {dailyLog.total_screen_minutes ?? 0}
+                    </span>
+                    <span className="text-[8px] font-semibold text-slate-400 uppercase tracking-widest">min</span>
                   </div>
-                ))}
+                </div>
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
+                      {isEffectiveToday ? 'Today' : format(viewDate, 'MMM d')}
+                    </span>
+                    {(dailyLog.total_screen_minutes ?? 0) <= (settings?.screen_time_target ?? 60) ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold">
+                        {(settings?.screen_time_target ?? 60) - (dailyLog.total_screen_minutes ?? 0)}m left
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-500 text-[9px] font-bold">
+                        +{(dailyLog.total_screen_minutes ?? 0) - (settings?.screen_time_target ?? 60)}m over
+                      </span>
+                    )}
+                  </div>
+                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        (dailyLog.total_screen_minutes ?? 0) <= (settings?.screen_time_target ?? 60)
+                          ? 'bg-emerald-400'
+                          : 'bg-red-400'
+                      }`}
+                      style={{ width: `${Math.min(100, ((dailyLog.total_screen_minutes ?? 0) / Math.max(1, settings?.screen_time_target ?? 60)) * 100)}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[9px]">
+                    <span className="text-slate-400 font-medium">Used</span>
+                    <span className="text-slate-400 font-medium">Target: {settings?.screen_time_target ?? 60}m</span>
+                  </div>
+                </div>
               </div>
-              {totalUniqueApps > 3 && (
-                <p className="text-[9px] text-slate-400 font-semibold pt-1">+{totalUniqueApps - 3} more</p>
+              {topApps.length > 0 && (
+                <div className="border-t border-slate-100 pt-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Smartphone size={12} className="text-violet-400" />
+                    <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-widest">Top Apps</span>
+                  </div>
+                  <div className="space-y-2">
+                    {topApps.map((app, i) => {
+                      const colors = ['bg-violet-400', 'bg-blue-400', 'bg-amber-400'];
+                      return (
+                        <div key={app.appName + '-' + app.minutes} className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${colors[i] ?? 'bg-slate-300'}`} />
+                            <span className="text-xs font-semibold text-slate-700 truncate">{app.appName}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-violet-400"
+                                style={{ width: `${Math.min(100, (app.minutes / Math.max(1, dailyLog.total_screen_minutes ?? 1)) * 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-bold text-slate-500 tabular-nums w-10 text-right">{app.minutes}m</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {totalUniqueApps > 3 && (
+                      <p className="text-[9px] text-slate-400 font-semibold text-center pt-1">+{totalUniqueApps - 3} more apps</p>
+                    )}
+                  </div>
+                </div>
               )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400">
+                <Clock size={22} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-400">No data yet</p>
+                <p className="text-[10px] text-slate-300">Screen time will appear once tracked.</p>
+              </div>
             </div>
           )}
         </div>

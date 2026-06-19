@@ -8,6 +8,7 @@ import { WeightChart } from './WeightChart.tsx';
 import { RelapseDeepAnalysis } from './RelapseDeepAnalysis.tsx';
 import { ErrorBoundary } from '../layout/ErrorBoundary.tsx';
 import type { PeriodType } from '../../hooks/useAnalyticsData.ts';
+import type { DayEntry } from './relapsePresenter.ts';
 
 interface BehaviorItem { label: string; score: number }
 interface WeightDelta { value: string; isLoss: boolean; isGain: boolean }
@@ -23,6 +24,7 @@ interface SummarizeData {
   relapseChartData: ChartItem[];
   avgScore: number;
   prevAvgScore: number;
+  prevDaysCount: number;
   behaviorPattern: BehaviorItem[];
   prayerPercentage: number;
   strongestPrayer: string;
@@ -38,10 +40,9 @@ interface SummarizeData {
 interface SummarizeSectionProps {
   data: SummarizeData;
   periodType: PeriodType;
-  isPeriodComplete: boolean;
   periodLabel: string;
-  activeData?: any[];
-  allData?: any[];
+  activeData?: DayEntry[];
+  allData?: DayEntry[];
   relapseTarget: number;
   firstWeekday: number;
 }
@@ -64,10 +65,11 @@ function formatDuration(minutes: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function screenAvg(totalMinutes: number, periodType: PeriodType, days: number): number {
+function screenAvg(totalMinutes: number, periodType: PeriodType, days: number, data: SummarizeData): number {
   if (periodType === 'weekly') return totalMinutes / Math.max(1, days);
   if (periodType === 'monthly') return totalMinutes / Math.max(1, Math.ceil(days / 7));
-  return totalMinutes / 12;
+  const monthsWithData = data.behaviorPattern.length || 1;
+  return totalMinutes / monthsWithData;
 }
 
 function scoreColor(score: number): string {
@@ -78,22 +80,21 @@ function scoreBgColor(score: number): string {
   return score >= 80 ? 'stroke-emerald-500' : score >= 50 ? 'stroke-amber-500' : 'stroke-red-500';
 }
 
-export const SummarizeSection = React.memo(function SummarizeSection({ data, periodType, isPeriodComplete, periodLabel, activeData, allData, relapseTarget, firstWeekday }: SummarizeSectionProps) {
+export const SummarizeSection = React.memo(function SummarizeSection({ data, periodType, periodLabel, activeData, allData, relapseTarget, firstWeekday }: SummarizeSectionProps) {
   const [relapseExpanded, setRelapseExpanded] = useState(false);
   const [weightExpanded, setWeightExpanded] = useState(false);
   const [screenExpanded, setScreenExpanded] = useState(false);
 
-  const relapseLabel = periodType === 'weekly' ? 'per day' :
-    periodType === 'monthly' ? 'per week' : 'per month';
+  const relapseLabel = 'per day';
 
-  const displayScore = Math.round(data.avgScore);
+  const displayScore = Math.round(Math.max(0, Math.min(100, data.avgScore)));
   const scorePeriod = periodType === 'weekly' ? 'This Week' :
     periodType === 'monthly' ? 'This Month' : 'This Year';
-  const scoreDelta = data.prevAvgScore !== 0 ? displayScore - Math.round(data.prevAvgScore) : null;
+  const scoreDelta = data.prevDaysCount > 0 ? displayScore - Math.round(data.prevAvgScore) : null;
 
   const screenTotalFormatted = data.screenTotal > 0 ? formatTime(data.screenTotal) : '--';
   const screenAvgFormatted = data.screenTotal > 0
-    ? formatTime(screenAvg(data.screenTotal, periodType, activeData?.length || 0))
+    ? formatTime(screenAvg(data.screenTotal, periodType, activeData?.length || 0, data))
     : '--';
 
   return (
@@ -104,11 +105,11 @@ export const SummarizeSection = React.memo(function SummarizeSection({ data, per
       className="space-y-6 pb-24"
     >
       {/* ── Score Gauge ── */}
-      <div className="card p-6 bg-slate-950 text-white border-0 relative overflow-hidden">
+      <div className="card p-6 bg-slate-950 text-white border-0 relative overflow-hidden mt-6">
         <div className="absolute -top-20 -right-20 w-48 h-48 bg-emerald-500/5 rounded-full blur-3xl" />
         <div className="relative flex flex-col items-center">
           <div className="flex items-center gap-1.5 mb-3">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">{scorePeriod}</span>
+            <span className="text-[9px] font-semibold uppercase tracking-widest text-slate-400">{scorePeriod}</span>
             {scoreDelta !== null && (
               <span className={cn(
                 'flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full',
@@ -152,8 +153,9 @@ export const SummarizeSection = React.memo(function SummarizeSection({ data, per
       {/* ── KPI Stats Grid ── */}
       <div className="grid grid-cols-2 gap-3">
         {/* Relapses */}
-        <button
+        <button type="button"
           onClick={() => setRelapseExpanded(!relapseExpanded)}
+          aria-expanded={relapseExpanded}
           className="card p-4 flex flex-col gap-1.5 text-left w-full cursor-pointer active:scale-[0.98] transition-transform"
         >
           <div className="flex items-center justify-between">
@@ -197,8 +199,9 @@ export const SummarizeSection = React.memo(function SummarizeSection({ data, per
         </div>
 
         {/* Screen Time */}
-        <button
+        <button type="button"
           onClick={() => setScreenExpanded(!screenExpanded)}
+          aria-expanded={screenExpanded}
           className="card p-4 flex flex-col gap-1.5 text-left w-full cursor-pointer active:scale-[0.98] transition-transform"
         >
           <div className="flex items-center justify-between">
@@ -213,8 +216,9 @@ export const SummarizeSection = React.memo(function SummarizeSection({ data, per
         </button>
 
         {/* Weight */}
-        <button
+        <button type="button"
           onClick={() => setWeightExpanded(!weightExpanded)}
+          aria-expanded={weightExpanded}
           className="card p-4 flex flex-col gap-1.5 text-left w-full cursor-pointer active:scale-[0.98] transition-transform"
         >
           <div className="flex items-center justify-between">
@@ -265,6 +269,7 @@ export const SummarizeSection = React.memo(function SummarizeSection({ data, per
         )}
       </AnimatePresence>
 
+      {/* ── Weight Analysis ── */}
       <AnimatePresence>
         {weightExpanded && data.weightChartData.length > 0 && (
           <motion.div
@@ -296,9 +301,7 @@ export const SummarizeSection = React.memo(function SummarizeSection({ data, per
                   <p className="text-lg font-bold text-slate-900 tabular-nums">{screenTotalFormatted}</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
-                    {periodType === 'weekly' ? 'DAILY AVG' : periodType === 'monthly' ? 'WEEKLY AVG' : 'MONTHLY AVG'}
-                  </p>
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-widest mb-1">DAILY AVG</p>
                   <p className="text-lg font-bold text-slate-900 tabular-nums">{screenAvgFormatted}</p>
                 </div>
               </div>

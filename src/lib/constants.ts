@@ -15,6 +15,7 @@ export const STORAGE_KEYS = {
   APP_SETTINGS: 'man_app_settings',
   MIGRATION_DONE: 'man_migration_done',
   TIMEZONE: 'man_timezone',
+  SCREEN_TIME_TODAY: 'screen_time_today',
 } as const;
 
 export const DB = {

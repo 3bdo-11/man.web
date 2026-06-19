@@ -3,9 +3,10 @@ import { startOfWeek, endOfWeek, addDays, format, subMonths, differenceInDays, g
 export interface DayEntry {
   date: Date;
   dateStr: string;
-  value: number;       // Loop-style: 2=YES_MANUAL(clean), 0=NO(relapsed)
+  value: number;
   relapseCount: number;
   score: number;
+  relapses?: unknown[];
 }
 
 export interface StreakInfo {
@@ -78,11 +79,11 @@ export function getDayLabels(firstWeekday: number): string[] {
   return [...BASE.slice(firstWeekday), ...BASE.slice(0, firstWeekday)];
 }
 
-function isCleanDay(d: any): boolean {
+function isCleanDay(d: DayEntry): boolean {
   return (d.relapseCount || 0) === 0;
 }
 
-export function computeStreaks(days: any[]): {
+export function computeStreaks(days: DayEntry[]): {
   currentStreak: number; bestStreak: number; isActive: boolean; topStreaks: StreakInfo[];
 } {
   const sorted = [...days].filter(isCleanDay).map(d => d.date).sort((a: Date, b: Date) => a.getTime() - b.getTime());
@@ -116,11 +117,12 @@ export function computeStreaks(days: any[]): {
 }
 
 export function computeTargetBars(
-  activeData: any[],
+  activeData: DayEntry[],
   totalRelapses: number,
   totalDays: number,
   targetPerDay: number
 ): TargetBar[] {
+  if (activeData.length === 0) return [];
   const today = activeData.length > 0 ? activeData[activeData.length - 1] : null;
   const todayCount = today ? today.relapseCount : 0;
 
@@ -150,7 +152,7 @@ export function computeTargetBars(
   ];
 }
 
-export function computeHistoryGrid(activeData: any[], firstWeekday: number = 6): HistoryGrid {
+export function computeHistoryGrid(activeData: DayEntry[], firstWeekday: number = 6): HistoryGrid {
   if (!activeData || activeData.length === 0) return { weeks: [] };
 
   const dates = activeData.map(d => d.date).sort((a: Date, b: Date) => a.getTime() - b.getTime());
@@ -186,7 +188,7 @@ export function computeHistoryGrid(activeData: any[], firstWeekday: number = 6):
   return { weeks };
 }
 
-export function computeFrequencyCells(activeData: any[], firstWeekday: number = 6): FrequencyCell[] {
+export function computeFrequencyCells(activeData: DayEntry[], firstWeekday: number = 6): FrequencyCell[] {
   const monthMap = new Map<string, number[]>();
   activeData.forEach(d => {
     const count = d.relapseCount || 0;
@@ -207,7 +209,7 @@ export function computeFrequencyCells(activeData: any[], firstWeekday: number = 
   });
 }
 
-export function computeWeekdayTotals(activeData: any[], firstWeekday: number = 6): number[] {
+export function computeWeekdayTotals(activeData: DayEntry[], firstWeekday: number = 6): number[] {
   const counts = [0, 0, 0, 0, 0, 0, 0];
   for (const day of activeData) {
     const dow = getDay(day.date);
@@ -217,9 +219,9 @@ export function computeWeekdayTotals(activeData: any[], firstWeekday: number = 6
   return counts;
 }
 
-export function computeScoreChange(activeData: any[], prevMonths: number): number {
+export function computeScoreChange(activeData: DayEntry[], prevMonths: number): number {
   const now = new Date();
-  const cutoff = new Date(now.getFullYear(), now.getMonth() - prevMonths, now.getDate());
+  const cutoff = subMonths(now, prevMonths);
   const recent = activeData.filter(d => d.date >= cutoff);
   const older = activeData.filter(d => d.date < cutoff && d.date >= subMonths(now, prevMonths * 2));
   const recentAvg = recent.length > 0 ? recent.reduce((s, d) => s + d.score, 0) / recent.length : 0;
@@ -228,13 +230,13 @@ export function computeScoreChange(activeData: any[], prevMonths: number): numbe
   return Math.round(((recentAvg - olderAvg) / Math.abs(olderAvg)) * 100);
 }
 
-export function computeScoreData(activeData: any[]): ScorePoint[] {
+export function computeScoreData(activeData: DayEntry[]): ScorePoint[] {
   return activeData
     .filter(d => d.score !== undefined)
     .map(d => ({ date: format(d.date, 'MMM d'), value: d.score }));
 }
 
-export function computeBarData(activeData: any[], bucketSize: 'day' | 'week' | 'month'): BarEntry[] {
+export function computeBarData(activeData: DayEntry[], bucketSize: 'day' | 'week' | 'month'): BarEntry[] {
   if (bucketSize === 'week') {
     const chunkSize = Math.max(1, Math.ceil(activeData.length / 4));
     return [0, 1, 2, 3].map(i => {
@@ -256,11 +258,11 @@ export function computeBarData(activeData: any[], bucketSize: 'day' | 'week' | '
   }));
 }
 
-export function buildRelapseState(activeData: any[], targetPerDay: number = 2, firstWeekday: number = 6): RelapseState {
+export function buildRelapseState(activeData: DayEntry[], targetPerDay: number = 2, firstWeekday: number = 6): RelapseState {
   const totalDays = activeData.length;
   const totalRelapses = activeData.reduce((s, d) => s + (d.relapseCount || 0), 0);
   const totalClean = activeData.filter(isCleanDay).length;
-  const avgScore = totalDays > 0 ? Math.round(activeData.reduce((s, d) => s + d.score, 0) / totalDays) : 0;
+  const avgScore = totalDays > 0 ? Math.round(activeData.reduce((s, d) => s + (d.score ?? 0), 0) / totalDays) : 0;
   const todayScore = activeData.length > 0 ? activeData[activeData.length - 1].score : 0;
   const scoreChange1m = computeScoreChange(activeData, 1);
   const scoreChange1y = computeScoreChange(activeData, 12);

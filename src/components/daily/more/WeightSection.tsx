@@ -30,10 +30,12 @@ export default function WeightSection({ weightInput, lastKnownWeight, onWeightCh
 
   return (
     <section className="space-y-4">
-      <h2 className="section-header">Weight</h2>
+      <div className="flex items-center justify-between px-1">
+        <h2 className="section-header">Weight</h2>
+      </div>
       <div className="card bg-white border-slate-100 shadow-sm">
         <div className="flex items-center justify-center gap-6 py-2">
-          <button
+          <button type="button"
             onClick={() => step(-0.5)}
             aria-label="Decrease weight by 0.5 kg"
             className="w-12 h-12 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 active:scale-90 transition-all text-xl font-light hover:bg-slate-100"
@@ -46,7 +48,7 @@ export default function WeightSection({ weightInput, lastKnownWeight, onWeightCh
             </span>
             <span className="text-sm font-semibold text-slate-400">kg</span>
           </div>
-          <button
+          <button type="button"
             onClick={() => step(0.5)}
             aria-label="Increase weight by 0.5 kg"
             className="w-12 h-12 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 active:scale-90 transition-all text-xl font-light hover:bg-slate-100"

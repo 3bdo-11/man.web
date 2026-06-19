@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { storageService } from '../lib/storageService.ts';
 import { format, subDays, eachDayOfInterval } from 'date-fns';
-import { getBehavioralToday, getLogicalWeekRange, safeParseDate } from '../lib/dateUtils.ts';
+import { getBehavioralToday, getLogicalWeekRange, getLogicalDateStr, safeParseDate } from '../lib/dateUtils.ts';
 import { calculateDailyScore } from '../lib/scoring.ts';
 import { UserSettings } from '../types.ts';
 
@@ -82,8 +82,8 @@ function getMostTime(relapses: any[]): string {
 }
 
 export function useAnalyticsData(settings: UserSettings | null) {
-  const [periodType, setPeriodType] = useState<PeriodType>('weekly');
   const [periodOffset, setPeriodOffset] = useState(0);
+  const [periodType, setPeriodType] = useState<PeriodType>('weekly');
   const [dailyData, setDailyData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const firstWeekday = settings?.firstWeekday ?? 6;
@@ -93,18 +93,17 @@ export function useAnalyticsData(settings: UserSettings | null) {
   const prevPeriodRange = useMemo(() => getPeriodRange(periodType, periodOffset + 1, firstWeekday), [periodType, periodOffset, firstWeekday]);
 
   const canGoBack = useMemo(() => {
-    if (dailyData.length === 0) return true;
-    const earliest = dailyData[0].date;
-    return earliest < periodRange.start;
-  }, [dailyData, periodRange]);
+    const today = getBehavioralToday();
+    const nextRange = getPeriodRange(periodType, periodOffset + 1, firstWeekday);
+    return dailyData.some(d => d.date >= nextRange.start && d.date <= nextRange.end);
+  }, [dailyData, periodType, periodOffset, firstWeekday]);
 
   const canGoForward = periodOffset > 0;
   const onPrev = useCallback(() => setPeriodOffset(o => o + 1), []);
-  const onNext = useCallback(() => setPeriodOffset(o => Math.max(0, o - 1)), []);
+  const onNext = useCallback(() => setPeriodOffset(o => o - 1), []);
 
   const handlePeriodTypeChange = useCallback((type: PeriodType) => {
     setPeriodType(type);
-    setPeriodOffset(0);
   }, []);
 
   const activeData = useMemo(() =>
@@ -124,10 +123,11 @@ export function useAnalyticsData(settings: UserSettings | null) {
 
   const summarize = useMemo(() => {
     if (activeData.length === 0) return {
-      totalRelapses: 0, prevTotalRelapses: 0, avgRelapse: '0', mostTrigger: '--', mostTime: '--',
+      totalRelapses: 0, prevTotalRelapses: 0, avgRelapse: '0', mostTime: '--',
       relapseChartData: [] as { label: string; value: number }[],
       avgScore: 0,
       prevAvgScore: 0,
+      prevDaysCount: 0,
       behaviorPattern: [] as { label: string; score: number }[],
       prayerPercentage: 0, strongestPrayer: '--', weakestPrayer: '--',
       weightAvg: 0, weightDelta: null,
@@ -142,28 +142,45 @@ export function useAnalyticsData(settings: UserSettings | null) {
     // Most common time
     const mostTime = getMostTime(allRelapses);
 
-    const dayCount = activeData.length;
+    const hasActivity = (d: any) => d && (d.relapseCount > 0 || d.prayers?.length > 0 || d.trainings?.length > 0 || d.weight != null || (d.screen_minutes || 0) > 0);
+
+    const activeDays = activeData.filter(hasActivity);
+    const totalDays = activeData.length;
+    const activeDayCount = Math.max(1, activeDays.length);
     let avgRelapse: string;
     if (periodType === 'weekly') {
-      avgRelapse = (totalRelapses / Math.max(1, dayCount)).toFixed(1);
+      avgRelapse = (totalRelapses / activeDayCount).toFixed(1);
     } else if (periodType === 'monthly') {
-      avgRelapse = (totalRelapses / Math.max(1, Math.ceil(dayCount / 7))).toFixed(1);
+      avgRelapse = (totalRelapses / Math.max(1, Math.ceil(activeDayCount / 7))).toFixed(1);
     } else {
       avgRelapse = (totalRelapses / 12).toFixed(1);
     }
 
-    const avgScore = Math.round(activeData.reduce((acc, d) => acc + d.score, 0) / dayCount);
+    const avgScore = Math.round(activeDays.reduce((acc, d) => acc + d.score, 0) / activeDayCount);
     const prevDayCount = prevData.length;
+    const prevDaysCount = prevDayCount;
     const prevAvgScore = prevDayCount > 0 ? Math.round(prevData.reduce((acc, d) => acc + d.score, 0) / prevDayCount) : 0;
 
-    const behaviorPattern = _buildChartData(periodType, activeData, dayCount, periodRange,
+    const behaviorPattern = _buildChartData(periodType, activeData, totalDays, periodRange,
       (d: any) => d ? Math.round(d.score) : 0,
       (chunk: any[]) => chunk.length > 0 ? Math.round(chunk.reduce((s: number, d: any) => s + d.score, 0) / chunk.length) : 0,
       (mData: any[]) => mData.length > 0 ? Math.round(mData.reduce((s: number, d: any) => s + d.score, 0) / mData.length) : 0,
       firstWeekday
-    ).map(d => ({ label: d.label, score: d.value }));
+    );
 
-    const relapseChartData = _buildChartData(periodType, activeData, dayCount, periodRange,
+    const activityPattern = _buildChartData(periodType, activeData, totalDays, periodRange,
+      (d: any) => hasActivity(d),
+      (chunk: any[]) => chunk.some(hasActivity),
+      (mData: any[]) => mData.some(hasActivity),
+      firstWeekday
+    );
+
+    const filteredPattern = behaviorPattern
+      .map((d, i) => ({ label: d.label, score: d.value, active: activityPattern[i]?.value as boolean }))
+      .filter(d => d.active)
+      .map(d => ({ label: d.label, score: d.score }));
+
+    const relapseChartData = _buildChartData(periodType, activeData, totalDays, periodRange,
       (d: any) => d ? d.relapseCount : 0,
       (chunk: any[]) => chunk.reduce((s: number, d: any) => s + d.relapseCount, 0),
       (mData: any[]) => mData.reduce((s: number, d: any) => s + d.relapseCount, 0),
@@ -180,13 +197,13 @@ export function useAnalyticsData(settings: UserSettings | null) {
     const strongestPrayer = sortedStrong[0]?.type || '--';
     const weakestPrayer = [...pStats].sort((a, b) => a.count - b.count)[0]?.type || '--';
     const prayedCount = activeData.reduce((acc, d) => acc + (d.prayers?.filter((p: any) => p.status === 'prayed')?.length || 0), 0);
-    const totalPossible = dayCount * 5;
+    const totalPossible = activeDayCount * 5;
     const prayerPercentage = totalPossible > 0 ? Math.round((prayedCount / totalPossible) * 100) : 0;
 
     // Weight
-    const weights = activeData.filter(d => d.weight).map(d => d.weight);
+    const weights = activeData.filter(d => d.weight != null).map(d => d.weight!);
     const weightAvg = weights.length > 0 ? parseFloat((weights.reduce((a, b) => a + b, 0) / weights.length).toFixed(1)) : 0;
-    const prevWeights = prevData.filter(d => d.weight).map(d => d.weight);
+    const prevWeights = prevData.filter(d => d.weight != null).map(d => d.weight!);
     let weightDelta: { value: string; isLoss: boolean; isGain: boolean } | null = null;
     if (prevWeights.length > 0 && weightAvg > 0) {
       const prevAvg = prevWeights.reduce((a, b) => a + b, 0) / prevWeights.length;
@@ -197,7 +214,7 @@ export function useAnalyticsData(settings: UserSettings | null) {
     const avgWeight = (arr: number[]) => arr.length > 0 ? parseFloat((arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(1)) : null;
     const weightChartData = periodType === 'weekly'
       ? activeData.filter(d => d.weight != null).map(d => ({ label: format(d.date, 'd'), value: d.weight }))
-      : _buildChartData(periodType, activeData, dayCount, periodRange,
+      : _buildChartData(periodType, activeData, totalDays, periodRange,
           (d: any) => d?.weight != null ? d.weight : null,
           (chunk: any[]) => avgWeight(chunk.filter((d: any) => d.weight != null).map((d: any) => d.weight)),
           (mData: any[]) => avgWeight(mData.filter((d: any) => d.weight != null).map((d: any) => d.weight)),
@@ -218,7 +235,7 @@ export function useAnalyticsData(settings: UserSettings | null) {
       .slice(0, 3)
       .map(([appName, minutes]) => ({ appName, minutes }));
 
-    const screenChartData = _buildChartData(periodType, activeData, dayCount, periodRange,
+    const screenChartData = _buildChartData(periodType, activeData, totalDays, periodRange,
       (d: any) => d ? d.screen_minutes : 0,
       (chunk: any[]) => chunk.reduce((s: number, d: any) => s + (d.screen_minutes || 0), 0),
       (mData: any[]) => mData.reduce((s: number, d: any) => s + (d.screen_minutes || 0), 0),
@@ -228,7 +245,7 @@ export function useAnalyticsData(settings: UserSettings | null) {
     return {
       totalRelapses, prevTotalRelapses, avgRelapse, mostTime,
       relapseChartData,
-      avgScore, prevAvgScore, behaviorPattern,
+      avgScore, prevAvgScore, prevDaysCount, behaviorPattern: filteredPattern,
       prayerPercentage, strongestPrayer, weakestPrayer,
       weightAvg, weightDelta, weightChartData,
       screenTotal, topApps, screenChartData,
@@ -295,10 +312,11 @@ export function useAnalyticsData(settings: UserSettings | null) {
     return () => { signal.cancelled = true; };
   }, [fetchAnalytics]);
 
-  const hasData = activeData.some(d => d.score !== 0 || d.relapseCount > 0 || d.prayers.length > 0 || d.weight != null);
+  const todayStr = getLogicalDateStr(getBehavioralToday());
+  const hasData = dailyData.some(d => d.dateStr <= todayStr && (d.score !== 0 || d.relapseCount > 0 || d.prayers.length > 0 || d.weight != null));
 
   return {
-    loading, periodType, setPeriodType: handlePeriodTypeChange, periodOffset, setPeriodOffset,
+    loading, periodType, setPeriodType: handlePeriodTypeChange,
     canGoBack, canGoForward, periodLabel: periodRange.label, onPrev, onNext,
     summarize, isPeriodComplete,
     activeData, dailyData, hasData,

@@ -17,7 +17,15 @@ export const offlineDb = {
     const allLogs = await storageService.getAllDays();
 
     const migrationDone = localStorage.getItem(STORAGE_KEYS.MIGRATION_DONE);
-    if (migrationDone) return;
+    if (migrationDone) {
+      // Always refresh subscribers so any data written before init finished
+      // (e.g. by usePersistentScreenTime) gets picked up.
+      setTimeout(() => {
+        window.dispatchEvent(new Event(EVENTS.DATA_UPDATED));
+        window.dispatchEvent(new Event(EVENTS.SETTINGS_UPDATED));
+      }, 0);
+      return;
+    }
 
     // Legacy localStorage migration (only if new storage is empty)
     if (Object.keys(allLogs).length === 0) {
@@ -77,7 +85,9 @@ export const offlineDb = {
     localStorage.setItem(STORAGE_KEYS.MIGRATION_DONE, '1');
     window.dispatchEvent(new Event(EVENTS.DATA_UPDATED));
     window.dispatchEvent(new Event(EVENTS.SETTINGS_UPDATED));
+    return;
   },
+
 
   resetAllData: async () => {
     await storageService.clearAll();
@@ -106,9 +116,12 @@ export const offlineDb = {
     window.dispatchEvent(new Event(EVENTS.DATA_UPDATED));
   },
 
-  getDay: (dateStr: string): LocalDayData | null => {
-    const cached = storageService.getCachedDay(dateStr);
-    return cached ? { ...cached } : null;
+  getDay: (dateStr: string): Promise<LocalDayData | null> => {
+    return storageService.getDay(dateStr);
+  },
+
+  getCachedDay: (dateStr: string): LocalDayData | null => {
+    return storageService.getCachedDay(dateStr);
   },
 
   updateDay: (dateStr: string, updates: Partial<LocalDayData>): Promise<void> => {

@@ -13,13 +13,19 @@
     "test:watch": "vitest",
     "test:e2e": "npx playwright test",
     "cap:sync": "npm run build && npx cap sync",
+    "cap:run": "node scripts/cap-run.mjs",
+    "cap:live": "node scripts/cap-run.mjs --live",
     "cap:open": "npx cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/cli": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/local-notifications": "^8.2.0",
     "adhan": "^4.4.3",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-
     "idb": "^8.0.3",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
@@ -42,7 +48,6 @@
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",
     "@vitejs/plugin-react": "^5.0.4",
-
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",

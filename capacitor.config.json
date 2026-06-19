@@ -1,0 +1,6 @@
+{
+  "appId": "com.man.app",
+  "appName": "MAN",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

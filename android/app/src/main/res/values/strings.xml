@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MAN</string>
+    <string name="title_activity_main">MAN</string>
+    <string name="package_name">com.man.app</string>
+    <string name="custom_url_scheme">com.man.app</string>
+</resources>

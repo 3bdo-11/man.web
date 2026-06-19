@@ -1,4 +1,4 @@
-import React, { useState, useCallback, createContext, useContext, useRef } from 'react';
+import React, { useState, useCallback, createContext, useContext, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/cn.ts';
@@ -14,6 +14,10 @@ export function useToast() {
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<{ msg: string; type: 'error' | 'success' } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
 
   const showToast = useCallback((msg: string, type: 'error' | 'success' = 'error') => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -43,7 +47,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             )}
           >
             <p className="text-xs font-bold flex-1">{toast.msg}</p>
-            <button onClick={() => { setToast(null); if (timerRef.current) clearTimeout(timerRef.current); }} aria-label="Dismiss">
+            <button type="button" onClick={() => { setToast(null); if (timerRef.current) clearTimeout(timerRef.current); }} aria-label="Dismiss">
               <X size={14} className="opacity-60" />
             </button>
           </motion.div>

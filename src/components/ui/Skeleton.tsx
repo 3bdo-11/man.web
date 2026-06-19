@@ -1,7 +1,7 @@
 import { cn } from '../../lib/cn.ts';
 
 export function Skeleton({ className }: { className?: string; key?: string | number }) {
-  return <div className={cn('skeleton', className)} />;
+  return <div aria-hidden="true" className={cn('skeleton', className)} />;
 }
 
 export function CardSkeleton() {

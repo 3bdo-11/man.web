@@ -7,7 +7,7 @@ export function setHapticEnabled(enabled: boolean) {
 const vibrate = (pattern: number | number[]) => {
   if (!hapticEnabled) return;
   if (typeof navigator?.vibrate === 'function') {
-    navigator.vibrate(pattern);
+    try { navigator.vibrate(pattern); } catch { /* not supported */ }
   }
 };
 

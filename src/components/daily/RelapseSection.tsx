@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { format } from 'date-fns';
 import { Trash2, Star, Target } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -22,6 +22,11 @@ export default function RelapseSection({ relapses, dateStr, viewDate, settings }
   const [tapped, setTapped] = useState(false);
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (tapTimeoutRef.current) clearTimeout(tapTimeoutRef.current);
+    if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
+  }, []);
 
   const sortedRelapses = useMemo(() =>
     [...relapses].sort((a, b) =>
@@ -143,7 +148,7 @@ export default function RelapseSection({ relapses, dateStr, viewDate, settings }
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    <button
+                    <button type="button"
                       onClick={(e) => { e.stopPropagation(); handleDelete(relapse.id!); }}
                       aria-label={deletingId === relapse.id ? 'Confirm delete' : 'Delete relapse'}
                       className={cn(
@@ -179,13 +184,13 @@ export default function RelapseSection({ relapses, dateStr, viewDate, settings }
                         </label>
 
                         <div className="flex gap-2 pt-1">
-                          <button
+                          <button type="button"
                             onClick={() => saveEdit(relapse.id!)}
                             className="flex-1 bg-slate-900 text-white rounded-xl py-3 text-[10px] font-bold uppercase active:scale-95 transition-all"
                           >
                             Save Changes
                           </button>
-                          <button
+                          <button type="button"
                             onClick={() => setEditingId(null)}
                             className="px-4 text-slate-400 text-[10px] font-semibold uppercase"
                           >

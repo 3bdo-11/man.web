@@ -49,37 +49,25 @@ export const StreakBars = React.memo(function StreakBars({
               const showDates = pct < 60;
 
               return (
-                <div key={format(s.start, 'yyyy-MM-dd') + '-' + s.length} className="relative flex items-center h-6">
-                  {!showDates && (
-                    <span className="text-[9px] text-slate-400 font-medium w-14 text-right mr-2 flex-shrink-0">
-                      {format(s.start, 'MMM d')}
-                    </span>
-                  )}
-                  <div className="flex-1 flex items-center relative h-full">
+                <div key={format(s.start, 'yyyy-MM-dd') + '-' + s.length} className="flex items-center gap-2 h-6">
+                  <div className="flex-1 h-5 flex items-center">
                     <div
-                      className={cn('h-5 rounded-full flex items-center justify-center transition-all', barColor)}
-                      style={{ width: barWidth, minWidth: '2rem' }}
+                      className={cn('h-full rounded-full flex items-center justify-center transition-all min-w-[2rem]', barColor)}
+                      style={{ width: barWidth }}
                     >
                       <span className="text-[9px] font-bold text-white drop-shadow-sm px-1">
                         {s.length}
                       </span>
                     </div>
-                    {showDates && (
-                      <>
-                        <span className="text-[9px] text-slate-400 font-medium ml-2 whitespace-nowrap">
-                          {format(s.start, 'MMM d')}
-                        </span>
-                        <span className="text-[9px] text-slate-300 mx-1">→</span>
-                        <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
-                          {format(s.end, 'MMM d')}
-                        </span>
-                      </>
-                    )}
-                    {!showDates && (
-                      <span className="text-[9px] text-slate-400 font-medium ml-2 whitespace-nowrap">
-                        → {format(s.end, 'MMM d')}
-                      </span>
-                    )}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
+                      {format(s.start, 'MMM d')}
+                    </span>
+                    <span className="text-[9px] text-slate-300">→</span>
+                    <span className="text-[9px] text-slate-400 font-medium whitespace-nowrap">
+                      {format(s.end, 'MMM d')}
+                    </span>
                   </div>
                 </div>
               );

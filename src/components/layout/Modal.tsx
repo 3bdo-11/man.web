@@ -52,12 +52,13 @@ export function Modal({ show, onClose, children }: ModalProps) {
   return (
     <AnimatePresence>
       {show && (
-        <div
-          className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-6"
-          role="dialog"
-          aria-modal="true"
-          onKeyDown={handleKeyDown}
-        >
+          <div
+            className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-6"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Dialog"
+            onKeyDown={handleKeyDown}
+          >
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -74,6 +75,9 @@ export function Modal({ show, onClose, children }: ModalProps) {
             transition={{ type: 'spring', stiffness: 350, damping: 28 }}
             className="bg-white rounded-[3rem] p-8 max-w-sm w-full space-y-6 relative z-10 shadow-2xl outline-none"
           >
+            <button type="button" onClick={onClose} aria-label="Close dialog"
+              className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-colors text-sm font-bold"
+            >✕</button>
             {children}
           </motion.div>
         </div>

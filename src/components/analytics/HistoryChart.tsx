@@ -80,7 +80,7 @@ export const HistoryChart = React.memo(function HistoryChart({ weeks, relapseTar
                 : day.relapseCount <= relapseTarget * 2 ? 'bg-rose-300' : 'bg-rose-500';
 
               return (
-                <button
+                <button type="button"
                   key={colIdx}
                   onClick={() => navigate('/?date=' + encodeURIComponent(day.dateStr))}
                   className={cn(

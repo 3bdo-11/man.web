@@ -29,7 +29,7 @@ export const PeriodNavigation = React.memo(function PeriodNavigation({
     <div className="space-y-4">
       <div className="flex bg-slate-100/50 p-1 rounded-2xl w-full border border-slate-200/50" role="tablist">
         {PERIOD_TABS.map(tab => (
-          <button
+          <button type="button"
             key={tab.value}
             role="tab"
             aria-selected={periodType === tab.value}
@@ -46,7 +46,7 @@ export const PeriodNavigation = React.memo(function PeriodNavigation({
         ))}
       </div>
       <div className="flex items-center justify-between bg-white p-3 rounded-3xl border border-slate-100 shadow-sm">
-        <button
+        <button type="button"
           onClick={onPrev}
           disabled={!canGoBack}
           aria-label="Previous period"
@@ -59,7 +59,7 @@ export const PeriodNavigation = React.memo(function PeriodNavigation({
             {periodLabel}
           </p>
         </div>
-        <button
+        <button type="button"
           onClick={onNext}
           disabled={!canGoForward}
           aria-label="Next period"

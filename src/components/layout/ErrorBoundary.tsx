@@ -32,17 +32,17 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
         this.props.onRetry?.();
       };
       return this.props.fallback || (
-        <div className="flex flex-col items-center justify-center min-h-[50vh] gap-3 p-6">
+        <div role="alert" className="flex flex-col items-center justify-center min-h-[50vh] gap-3 p-6">
           <p className="text-xs font-bold text-red-500 uppercase tracking-widest">Something went wrong</p>
           <p className="text-xs text-slate-500 max-w-xs text-center font-mono">{this.state.error?.message}</p>
           <div className="flex gap-2 mt-2">
-            <button
+            <button type="button"
               onClick={retry}
               className="px-6 py-3 bg-slate-900 text-white rounded-xl text-xs font-bold uppercase tracking-widest active:scale-95 transition-all"
             >
               Try Again
             </button>
-            <button
+            <button type="button"
               onClick={() => { location.reload(); }}
               className="px-6 py-3 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold uppercase tracking-widest active:scale-95 transition-all"
             >

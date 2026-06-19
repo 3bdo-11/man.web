@@ -11,7 +11,7 @@ function scoreSinglePrayer(prayer?: PrayerLog): number {
       }
       return 5;
     case 'qada':
-      return 3;
+      return prayer.on_time ? 6 : 3;
     case 'missed':
       return -10;
     default:
@@ -20,27 +20,35 @@ function scoreSinglePrayer(prayer?: PrayerLog): number {
 }
 
 function calculateRelapseScore(actual: number, target: number): number {
-  if (target <= 0) return 0;
-  if (actual === 0) return 30;
-  if (actual <= target) {
-    return Math.round(30 * (1 - actual / target));
+  const a = Number.isFinite(actual) ? Math.max(0, actual) : 0;
+  const t = Number.isFinite(target) ? Math.max(0, target) : 0;
+  if (t <= 0 && a === 0) return 30;
+  if (t <= 0) return Math.max(-60, -a * 10);
+  if (a === 0) return 30;
+  if (a <= t) {
+    return Math.round(30 * (1 - a / t));
   }
-  return -(actual - target) * 10;
+  return Math.max(-60, -(a - t) * 10);
 }
 
 function calculateTrainingScore(trainings: TrainingLog[]): number {
+  if (trainings.length === 0) return 0;
   const types = new Set(trainings.map(t => t.type));
   let score = 0;
-  if (types.has('gym')) score += 5;
-  if (types.has('cardio')) score += 5;
-  if (types.has('fighting')) score += 5;
+  if (types.has('gym')) score += 3;
+  if (types.has('cardio')) score += 3;
+  if (types.has('fighting')) score += 3;
+  const sessionBonus = Math.min(trainings.length - types.size, 6);
+  score += sessionBonus;
   return Math.min(score, 15);
 }
 
 function calculateScreenTimeScore(actualMinutes: number, targetMinutes: number): number {
-  if (actualMinutes <= targetMinutes) return 5;
-  const hoursOver = Math.floor((actualMinutes - targetMinutes) / 60);
-  return -5 * hoursOver;
+  const actual = Number.isFinite(actualMinutes) ? Math.max(0, actualMinutes) : 0;
+  const target = Number.isFinite(targetMinutes) ? Math.max(0, targetMinutes) : 60;
+  if (actual <= target) return 5;
+  const minutesOver = actual - target;
+  return Math.max(-30, -Math.round((minutesOver / Math.max(1, target)) * 15));
 }
 
 export function calculateDailyScore(
@@ -62,7 +70,7 @@ export function calculateDailyScore(
   const rawScreen = log.total_screen_minutes || 0;
   const screenTimeScore = calculateScreenTimeScore(rawScreen, screenTimeTarget);
 
-  const total = prayerScore + relapseScore + trainingScore + screenTimeScore;
+  const total = Math.max(-100, Math.min(100, prayerScore + relapseScore + trainingScore + screenTimeScore));
 
   return { total, prayer: prayerScore, relapse: relapseScore, training: trainingScore, screenTime: screenTimeScore };
 }

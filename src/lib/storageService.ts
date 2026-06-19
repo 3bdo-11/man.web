@@ -1,5 +1,5 @@
 import { openDB, IDBPDatabase } from 'idb';
-import { format, subMonths, parseISO } from 'date-fns';
+import { format, subMonths } from 'date-fns';
 import { AppUsage, RelapseEvent, PrayerLog, TrainingLog, UserSettings } from '../types.ts';
 import { EVENTS, DB } from './constants.ts';
 
@@ -12,7 +12,6 @@ export interface LocalDayData {
   weight: number | null;
   updated_at: string;
   qada_count?: number;
-  day_completed?: boolean;
   app_usages?: AppUsage[];
 }
 
@@ -25,6 +24,7 @@ export function createEmptyDay(dateStr: string): LocalDayData {
     trainings: [],
     weight: null,
     updated_at: new Date().toISOString(),
+    qada_count: 0,
     app_usages: [],
   };
 }
@@ -75,9 +75,11 @@ export class StorageService {
     const db = await this.getDB();
     const keys = await db.getAllKeys(DB.LOGS_STORE);
     const values = await db.getAll(DB.LOGS_STORE);
-    this.memoryCache = {};
     keys.forEach((key, i) => {
-      this.memoryCache[key as string] = values[i];
+      const ks = key as string;
+      if (!(ks in this.memoryCache)) {
+        this.memoryCache[ks] = values[i];
+      }
     });
     this.settingsCache = (await db.get(DB.SETTINGS_STORE, 'current')) as UserSettings | null;
   }
@@ -128,6 +130,7 @@ export class StorageService {
 
   /** Enqueue a write with pre-computed updates. */
   updateDay(dateStr: string, updates: Partial<LocalDayData>): Promise<void> {
+    console.log('[StorageService] updateDay called for', dateStr, 'total_screen_minutes:', updates.total_screen_minutes);
     return new Promise((resolve, reject) => {
       if (!this.writeQueues.has(dateStr)) {
         this.writeQueues.set(dateStr, []);
@@ -164,6 +167,7 @@ export class StorageService {
     while (true) {
       const queue = this.writeQueues.get(dateStr);
       if (!queue || queue.length === 0) {
+        this.writeQueues.delete(dateStr);
         this.processingKeys.delete(dateStr);
         return;
       }
@@ -200,15 +204,18 @@ export class StorageService {
         }
 
         updated.updated_at = new Date().toISOString();
+        console.log('[StorageService] Writing to IndexedDB for', dateStr, 'total_screen_minutes:', updated.total_screen_minutes, 'app_usages:', updated.app_usages?.length);
         const db = await this.getDB();
         await db.put(DB.LOGS_STORE, updated, dateStr);
         this.memoryCache[dateStr] = updated;
+        console.log('[StorageService] Write complete, dispatching events for', dateStr);
 
         window.dispatchEvent(new Event(`${EVENTS.DATA_UPDATED_PREFIX}${dateStr}`));
         window.dispatchEvent(new Event(EVENTS.DATA_UPDATED));
 
         batch.forEach(item => item.resolve());
       } catch (err: unknown) {
+        console.error('[StorageService] Queue processing error for', dateStr, err);
         batch.forEach(item => item.reject(err));
       } finally {
         this.pendingWrites--;
@@ -218,8 +225,26 @@ export class StorageService {
     }
   }
 
+  /** Wait for all write queues to finish processing. */
+  private drainQueues(): Promise<void> {
+    if (this.processingKeys.size === 0 && this.pendingWrites === 0) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      const handler = () => {
+        if (this.processingKeys.size === 0 && this.pendingWrites === 0) {
+          window.removeEventListener(EVENTS.WRITE_END, handler);
+          resolve();
+        }
+      };
+      window.addEventListener(EVENTS.WRITE_END, handler);
+      handler();
+    });
+  }
+
   async replaceAllData(data: Record<string, LocalDayData>): Promise<void> {
     await this.init();
+    await this.drainQueues();
     const db = await this.getDB();
     const tx = db.transaction(DB.LOGS_STORE, 'readwrite');
     await tx.store.clear();
@@ -300,6 +325,7 @@ export class StorageService {
 
   async pruneOldData(retentionMonths: number): Promise<number> {
     if (retentionMonths <= 0) return 0;
+    await this.drainQueues();
     const cutoff = subMonths(new Date(), retentionMonths);
     const cutoffStr = format(cutoff, 'yyyy-MM-dd');
     const dates = Object.keys(this.memoryCache).filter(d => d < cutoffStr);
@@ -325,12 +351,18 @@ export class StorageService {
   subscribeToDay(dateStr: string, callback: (data: LocalDayData) => void): () => void {
     const handler = () => {
       const data = this.memoryCache[dateStr] || createEmptyDay(dateStr);
+      console.log('[StorageService] subscribeToDay handler firing for', dateStr, 'with total_screen_minutes:', data.total_screen_minutes);
       callback({ ...data });
     };
     const eventName = `${EVENTS.DATA_UPDATED_PREFIX}${dateStr}`;
     window.addEventListener(eventName, handler);
+    window.addEventListener(EVENTS.DATA_UPDATED, handler);
     handler();
-    return () => window.removeEventListener(eventName, handler);
+    return () => {
+      console.log('[StorageService] subscribeToDay cleanup for', dateStr);
+      window.removeEventListener(eventName, handler);
+      window.removeEventListener(EVENTS.DATA_UPDATED, handler);
+    };
   }
 
   exportData(): string {
@@ -394,7 +426,16 @@ export class StorageService {
       if (logs) {
         if (mode === 'merge') {
           for (const [date, log] of Object.entries(logs)) {
-            await this.updateDay(date, log as Partial<LocalDayData>);
+            const imported = log as Partial<LocalDayData>;
+            await this.mutateDay(date, (existing) => ({
+              prayers: { ...existing?.prayers, ...imported.prayers },
+              relapses: [...(existing?.relapses || []), ...(imported.relapses || [])],
+              trainings: [...(existing?.trainings || []), ...(imported.trainings || [])],
+              app_usages: [...(existing?.app_usages || []), ...(imported.app_usages || [])],
+              weight: imported.weight ?? existing?.weight ?? null,
+              total_screen_minutes: imported.total_screen_minutes ?? existing?.total_screen_minutes ?? 0,
+              qada_count: imported.qada_count ?? existing?.qada_count ?? 0,
+            }));
           }
         } else {
           await this.clearAllLogs();

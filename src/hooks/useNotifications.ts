@@ -33,54 +33,69 @@ export function useNotifications(userSettings: UserSettings | null) {
     timeoutRefs.current.forEach(clearTimeout);
     timeoutRefs.current = [];
 
-    MANDATORY_PRAYERS.forEach((prayerName, index) => {
-      const prayerTime = todayTimes[prayerName];
-      if (!prayerTime) return;
+    let cancelled = false;
 
-      if (prayerTime > now) {
-        notificationService.schedulePrayerReminder(
-          prayerName,
-          prayerTime,
-          userSettings.prayer_reminder_offset || 15,
-          todayStr
-        );
-      } else {
-        (async () => {
-          const dayData = await offlineDb.getDay(todayStr);
-          const logged = dayData?.prayers?.[prayerName];
-          const wasPrayed = logged?.status === 'prayed' || logged?.on_time === true;
-          if (!wasPrayed) {
-            const timerId = setTimeout(() => {
-              notificationService.show(
-                `${PRAYER_DISPLAY[prayerName]} was missed`,
-                `You haven't logged your ${PRAYER_DISPLAY[prayerName]} today. Log it now if you prayed.`
-              );
-            }, index * 1000);
-            timeoutRefs.current.push(timerId);
-          }
-        })();
-      }
+    const scheduleAll = async () => {
+      await notificationService.cancelAll();
 
-      const nextPrayerName = MANDATORY_PRAYERS[index + 1];
-      const checkTime = nextPrayerName ? todayTimes[nextPrayerName] : null;
+      const promises: Promise<void>[] = [];
 
-      if (checkTime) {
-        const delay = checkTime.getTime() - now.getTime();
-        if (delay > 0) {
-          notificationService.scheduleMissedPrayerCheck(
-            prayerName,
-            checkTime,
-            async () => {
-              const dayData = await offlineDb.getDay(todayStr);
-              return !dayData?.prayers?.[prayerName] || dayData.prayers[prayerName].status !== 'prayed';
-            },
-            todayStr
+      for (const [index, prayerName] of MANDATORY_PRAYERS.entries()) {
+        const prayerTime = todayTimes[prayerName];
+        if (!prayerTime) continue;
+
+        if (prayerTime > now) {
+          promises.push(
+            notificationService.schedulePrayerReminder(
+              prayerName,
+              prayerTime,
+              userSettings.prayer_reminder_offset || 15,
+              todayStr
+            )
+          );
+        } else {
+          (async () => {
+            const dayData = await offlineDb.getDay(todayStr);
+            if (cancelled) return;
+            const logged = dayData?.prayers?.[prayerName];
+            const wasPrayed = logged?.status === 'prayed' || logged?.on_time === true;
+            if (!wasPrayed) {
+              const timerId = setTimeout(() => {
+                notificationService.show(
+                  `${PRAYER_DISPLAY[prayerName]} was missed`,
+                  `You haven't logged your ${PRAYER_DISPLAY[prayerName]} today. Log it now if you prayed.`
+                );
+              }, index * 1000);
+              timeoutRefs.current.push(timerId);
+            }
+          })();
+        }
+
+        const nextPrayerName = MANDATORY_PRAYERS[index + 1];
+        const checkTime = nextPrayerName ? todayTimes[nextPrayerName] : null;
+
+        if (checkTime) {
+          promises.push(
+            notificationService.scheduleMissedPrayerCheck(
+              prayerName,
+              checkTime,
+              async () => {
+                const dayData = await offlineDb.getDay(todayStr);
+                return !dayData?.prayers?.[prayerName] || dayData.prayers[prayerName].status !== 'prayed';
+              },
+              todayStr
+            )
           );
         }
       }
-    });
+
+      await Promise.allSettled(promises);
+    };
+
+    scheduleAll();
 
     return () => {
+      cancelled = true;
       timeoutRefs.current.forEach(clearTimeout);
       timeoutRefs.current = [];
       notificationService.cancelAll();

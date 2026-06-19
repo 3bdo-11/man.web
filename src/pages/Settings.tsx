@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useContext, useCallback, type DragEvent, type ChangeEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, type DragEvent, type ChangeEvent } from 'react';
 import { offlineDb } from '../lib/offlineDb.ts';
 import { UserSettings } from '../types.ts';
 import { LocalDayData } from '../lib/storageService.ts';
@@ -13,10 +13,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { notificationService } from '../services/notificationService.ts';
+
 import { cn } from '../lib/cn.ts';
 import { haptic } from '../lib/haptic.ts';
 import { Modal } from '../components/layout/Modal.tsx';
-import { ToastContext } from '../components/layout/ToastProvider.tsx';
+import { useToast } from '../components/layout/ToastProvider.tsx';
+import { Capacitor } from '@capacitor/core';
+import { App } from '@capacitor/app';
+import { ScreenTime } from '../plugins/screenTimePlugin.ts';
 
 interface Props {
   settings: UserSettings | null;
@@ -37,34 +41,6 @@ function formatScreenTarget(m: number): string {
   return `${m / 60}h`;
 }
 
-function NotifBadge({ notifGranted, onGrant }: Readonly<{ notifGranted: boolean | null; onGrant: (v: boolean) => void }>) {
-  if (notifGranted === null) {
-    return <RefreshCw size={14} className="animate-spin text-slate-300" />;
-  }
-  if (notifGranted) {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
-        <Check size={12} /> Granted
-      </span>
-    );
-  }
-  return (
-    <button
-      onClick={async () => {
-        try {
-          const granted = await notificationService.requestPermission();
-          onGrant(granted);
-        } catch {
-          onGrant(false);
-        }
-      }}
-      className="px-4 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-semibold active:scale-95 transition-all"
-    >
-      Grant
-    </button>
-  );
-}
-
 function ToggleGroup<T extends string | number>({
   options,
   value,
@@ -77,7 +53,7 @@ function ToggleGroup<T extends string | number>({
   return (
     <div className="flex gap-1.5">
       {options.map(opt => (
-        <button
+        <button type="button"
           key={String(opt.value)}
           onClick={() => onChange(opt.value)}
           className={cn(
@@ -111,8 +87,9 @@ function SectionCard({
 }>) {
   return (
     <div className="rounded-2xl border border-slate-100 bg-[var(--brand-card)] overflow-hidden">
-      <button
+      <button type="button"
         onClick={onToggle}
+        aria-expanded={!collapsed}
         className="w-full flex items-center gap-4 p-5 text-left"
       >
         <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500 shrink-0">
@@ -153,7 +130,7 @@ function SectionCard({
 }
 
 export default function Settings({ settings: initialSettings }: Props) {
-  const showToast = useContext(ToastContext);
+  const showToast = useToast();
   const navigate = useNavigate();
   const [settings, setSettings] = useState<UserSettings>(initialSettings || {
     onboarding_completed: false,
@@ -199,16 +176,32 @@ export default function Settings({ settings: initialSettings }: Props) {
     }
   }, [initialSettings]);
 
+  const [usageAccessGranted, setUsageAccessGranted] = useState(false);
+
   useEffect(() => {
     notificationService.checkPermission().then(setNotifGranted);
+    ScreenTime.hasUsageAccessPermission().then(r => setUsageAccessGranted(r.granted));
   }, []);
 
-  const updateSetting = useCallback(async (key: keyof UserSettings, value: UserSettings[keyof UserSettings]) => {
-    if (key === 'notifications_enabled' && value === true) {
-      await notificationService.requestPermission();
-    }
+  useEffect(() => {
+    let removeListener: (() => void) | undefined;
+    App.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) {
+        ScreenTime.hasUsageAccessPermission().then(r => {
+          console.log('[ScreenTime] PERM:', r);
+          setUsageAccessGranted(r.granted);
+        });
+      }
+    }).then(h => { removeListener = h.remove; }).catch(() => {});
+    return () => { if (removeListener) removeListener(); };
+  }, []);
 
-    const newSettings = { ...settings, [key]: value };
+  const settingsRef = useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+
+  const updateSetting = useCallback(async (key: keyof UserSettings, value: UserSettings[keyof UserSettings]) => {
+    const current = settingsRef.current;
+    const newSettings = { ...current, [key]: value };
     setSettings(newSettings);
     setSaveStatus('saving');
     try {
@@ -219,7 +212,17 @@ export default function Settings({ settings: initialSettings }: Props) {
       console.error(e);
       setSaveStatus('idle');
     }
-  }, [settings]);
+  }, []);
+
+  const openNotificationSettings = async () => {
+    try {
+      const granted = await notificationService.requestPermission();
+      setNotifGranted(granted);
+      if (!granted && Capacitor.isNativePlatform()) {
+        /* User denied — they can re-enable from system settings */
+      }
+    } catch { setNotifGranted(false); }
+  };
 
   const exportAllData = async () => {
     setExporting(true);
@@ -304,7 +307,13 @@ export default function Settings({ settings: initialSettings }: Props) {
   };
 
   const handleResetData = async () => {
-    await offlineDb.resetAllData();
+    try {
+      await offlineDb.resetAllData();
+    } catch (err) {
+      console.error('Reset failed:', err);
+      showToast('Failed to clear data.', 'error');
+      return;
+    }
     setShowResetConfirm(false);
     showToast('All data has been cleared.', 'success');
     navigate('/', { replace: true });
@@ -343,7 +352,7 @@ export default function Settings({ settings: initialSettings }: Props) {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-4xl font-black italic tracking-tighter text-slate-900 leading-none">SETTINGS</h1>
-          <p className="text-xs font-semibold tracking-widest text-slate-400 mt-1">V1.0 ALPHA — Local</p>
+          <p className="text-xs font-semibold tracking-widest text-slate-400 mt-1">Version 1.0.0 — Local</p>
         </div>
         {saveStatus !== 'idle' && (
           <span className="text-xs font-semibold tracking-widest text-emerald-500 animate-pulse">
@@ -396,7 +405,7 @@ export default function Settings({ settings: initialSettings }: Props) {
         />
         <div className="space-y-1 pt-3 border-t border-slate-50">
           <p className="text-xs font-semibold tracking-widest text-slate-400 uppercase">Screen Time Target</p>
-          <p className="text-xs text-slate-400 leading-relaxed">Daily screen time goal. +5 if under target, -5 per hour over.</p>
+          <p className="text-xs text-slate-400 leading-relaxed">Daily screen time goal. +5 if under target, -1 per minute over.</p>
         </div>
         <ToggleGroup
           options={[30, 60, 90, 120, 180, 240].map(n => ({ value: n, label: formatScreenTarget(n) }))}
@@ -409,38 +418,82 @@ export default function Settings({ settings: initialSettings }: Props) {
         icon={<Shield size={18} />}
         title="Permissions"
         collapsed={collapsedCards.permissions}
-        summary={`Notifications: ${notifGranted ? 'Active' : 'Inactive'} · Reminder: ${reminderOffset}m`}
+        summary={`Notifications: ${notifGranted ? 'Active' : 'Inactive'} · Usage Access: ${usageAccessGranted ? 'Active' : 'Off'}`}
         onToggle={() => toggleCard('permissions')}
       >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-sky-50 rounded-xl flex items-center justify-center text-sky-500"><Bell size={18} /></div>
-            <div>
-              <p className="text-sm font-bold text-slate-900">Notifications</p>
-              <p className="text-xs text-slate-400">Prayer reminders & alerts</p>
+        <div className="space-y-4">
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-2xl bg-sky-100 flex items-center justify-center text-sky-600 shrink-0">
+              <Bell size={18} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-bold text-slate-900">Notifications</p>
+                  <p className="text-[10px] text-slate-500">Prayer reminders</p>
+                </div>
+                {notifGranted === null ? (
+                  <RefreshCw size={14} className="animate-spin text-slate-300 shrink-0" />
+                ) : notifGranted ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold shrink-0">
+                    <Check size={10} /> Active
+                  </span>
+                ) : (
+                  <button type="button" onClick={openNotificationSettings}
+                    className="px-4 py-1.5 rounded-xl bg-sky-600 text-white text-[9px] font-bold active:scale-95 transition-all shrink-0"
+                  >
+                    Enable
+                  </button>
+                )}
+              </div>
+              {notifGranted === false && (
+                <p className="text-[10px] text-sky-600 font-medium mt-1.5 leading-relaxed">
+                  Notifications are disabled. Tap Enable to grant permission.
+                </p>
+              )}
             </div>
           </div>
-          <NotifBadge notifGranted={notifGranted} onGrant={setNotifGranted} />
         </div>
-        <div className="pt-3 border-t border-slate-50 space-y-1">
-          <p className="text-xs font-semibold tracking-widest text-slate-400 uppercase">Reminder Offset</p>
+
+        <div className="border-t border-slate-100 pt-4 space-y-1">
+          <p className="section-header">Reminder Offset</p>
         </div>
         <ToggleGroup
           options={[5, 10, 15, 30].map(m => ({ value: m, label: `${m}m` }))}
           value={reminderOffset}
           onChange={v => updateSetting('prayer_reminder_offset', v)}
         />
-        <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-violet-50 rounded-xl flex items-center justify-center text-violet-500"><Smartphone size={18} /></div>
-            <div>
-              <p className="text-sm font-bold text-slate-900">Screen Time</p>
-              <p className="text-xs text-slate-400">Browser-based tracking</p>
+
+        <div className="border-t border-slate-100 pt-5 space-y-4">
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-2xl bg-violet-100 flex items-center justify-center text-violet-600 shrink-0">
+              <Smartphone size={18} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-bold text-slate-900">Usage Access</p>
+                  <p className="text-[10px] text-slate-500">Screen time tracking</p>
+                </div>
+                {usageAccessGranted ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold shrink-0">
+                    <Check size={10} /> Active
+                  </span>
+                ) : (
+                  <button type="button" onClick={async () => { await ScreenTime.requestUsageAccessPermission(); }}
+                    className="px-4 py-1.5 rounded-xl bg-violet-600 text-white text-[9px] font-bold active:scale-95 transition-all shrink-0"
+                  >
+                    Enable
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
+                {usageAccessGranted
+                  ? 'Tracking screen time across all apps. Data refreshes when the app opens.'
+                  : 'Required to measure total screen time. Opens Android settings to grant access.'}
+              </p>
             </div>
           </div>
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
-            <Check size={12} /> Active
-          </span>
         </div>
       </SectionCard>
 
@@ -452,35 +505,79 @@ export default function Settings({ settings: initialSettings }: Props) {
         onToggle={() => toggleCard('score')}
       >
         <div className="grid grid-cols-2 gap-3">
-          <div className="bg-slate-50 rounded-xl p-3.5 space-y-1">
-            <p className="text-xs font-bold text-slate-900">Prayer</p>
-            <p className="text-lg font-black text-slate-900">50</p>
-            <p className="text-xs text-slate-400 leading-snug">Fard + Sunnah on time: +10 · Fard on time: +9 · Late: +5 · Qada: +3 · Missed: -10</p>
+          <div className="bg-slate-50 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-bold text-slate-900 uppercase tracking-widest">Prayer</p>
+              <span className="text-xs font-black text-slate-900">50</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+              <div className="h-full bg-emerald-500 rounded-full" style={{ width: '100%' }} />
+            </div>
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+              <span className="text-[9px] text-emerald-600 font-semibold">F+S +10</span>
+              <span className="text-[9px] text-emerald-500 font-semibold">Fard +9</span>
+              <span className="text-[9px] text-amber-500 font-semibold">Late +5</span>
+              <span className="text-[9px] text-emerald-400 font-semibold">Qada +3</span>
+              <span className="text-[9px] text-red-400 font-semibold">Missed -10</span>
+            </div>
           </div>
-          <div className="bg-slate-50 rounded-xl p-3.5 space-y-1">
-            <p className="text-xs font-bold text-slate-900">Relapse</p>
-            <p className="text-lg font-black text-slate-900">30</p>
-            <p className="text-xs text-slate-400 leading-snug">Zero: +30 · At/under target: scaled · Over: -10 per excess</p>
+          <div className="bg-slate-50 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-bold text-slate-900 uppercase tracking-widest">Relapse</p>
+              <span className="text-xs font-black text-slate-900">30</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+              <div className="h-full bg-orange-400 rounded-full" style={{ width: '60%' }} />
+            </div>
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+              <span className="text-[9px] text-emerald-600 font-semibold">Zero +30</span>
+              <span className="text-[9px] text-blue-500 font-semibold">Scaled</span>
+              <span className="text-[9px] text-red-400 font-semibold">Over -10</span>
+            </div>
           </div>
-          <div className="bg-slate-50 rounded-xl p-3.5 space-y-1">
-            <p className="text-xs font-bold text-slate-900">Training</p>
-            <p className="text-lg font-black text-slate-900">15</p>
-            <p className="text-xs text-slate-400 leading-snug">Gym: +5 · Cardio: +5 · Fighting: +5</p>
+          <div className="bg-slate-50 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-bold text-slate-900 uppercase tracking-widest">Training</p>
+              <span className="text-xs font-black text-slate-900">15</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+              <div className="h-full bg-violet-400 rounded-full" style={{ width: '30%' }} />
+            </div>
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+              <span className="text-[9px] text-emerald-600 font-semibold">Gym +5</span>
+              <span className="text-[9px] text-emerald-600 font-semibold">Cardio +5</span>
+              <span className="text-[9px] text-emerald-600 font-semibold">Fight +5</span>
+            </div>
           </div>
-          <div className="bg-slate-50 rounded-xl p-3.5 space-y-1">
-            <p className="text-xs font-bold text-slate-900">Screen Time</p>
-            <p className="text-lg font-black text-slate-900">5</p>
-            <p className="text-xs text-slate-400 leading-snug">Under target: +5 · Over: -5 per hour</p>
+          <div className="bg-slate-50 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-bold text-slate-900 uppercase tracking-widest">Screen Time</p>
+              <span className="text-xs font-black text-slate-900">5</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+              <div className="h-full bg-cyan-400 rounded-full" style={{ width: '10%' }} />
+            </div>
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+              <span className="text-[9px] text-emerald-600 font-semibold">Under +5</span>
+              <span className="text-[9px] text-red-400 font-semibold">Over -1/min</span>
+            </div>
           </div>
         </div>
-        <div className="bg-emerald-50/50 rounded-xl p-4 space-y-2">
-          <p className="text-xs font-bold text-slate-900">Interpretation</p>
-          <div className="flex justify-between text-xs font-semibold">
-            <span className="text-emerald-600">80-100 Excellent</span>
-            <span className="text-emerald-500">50-79 Good</span>
-            <span className="text-amber-500">20-49 Average</span>
-            <span className="text-red-400">0-19 Poor</span>
-            <span className="text-slate-400">Below 0 Critical</span>
+        <div className="bg-slate-50 rounded-xl p-4 space-y-3">
+          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Score Range</p>
+          <div className="flex items-center h-5 rounded-full overflow-hidden text-[8px] font-bold">
+            <div className="flex-1 h-full flex items-center justify-center bg-emerald-600 text-white">80+</div>
+            <div className="flex-1 h-full flex items-center justify-center bg-emerald-400 text-white">50+</div>
+            <div className="flex-1 h-full flex items-center justify-center bg-amber-400 text-white">20+</div>
+            <div className="flex-1 h-full flex items-center justify-center bg-red-400 text-white">0+</div>
+            <div className="flex-[0.6] h-full flex items-center justify-center bg-slate-300 text-white">Below</div>
+          </div>
+          <div className="flex justify-between text-[9px] font-semibold">
+            <span className="text-emerald-700">Excellent</span>
+            <span className="text-emerald-600">Good</span>
+            <span className="text-amber-600">Average</span>
+            <span className="text-red-500">Poor</span>
+            <span className="text-slate-400">Critical</span>
           </div>
         </div>
       </SectionCard>
@@ -503,26 +600,28 @@ export default function Settings({ settings: initialSettings }: Props) {
           </div>
         </div>
         <div className="divide-y divide-slate-50 border border-slate-100 rounded-xl overflow-hidden">
-          <button onClick={exportAllData} disabled={exporting} className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors active:bg-slate-100">
+          <button type="button" onClick={exportAllData} disabled={exporting} className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors active:bg-slate-100">
             <span className="text-xs font-bold text-slate-900 uppercase">Export All Data</span>
             <Download size={16} className="text-slate-300" />
           </button>
           <ImportDropZone onImport={importAllData} />
-          <button onClick={exportReport} className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors active:bg-slate-100">
+          <button type="button" onClick={exportReport} className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors active:bg-slate-100">
             <span className="text-xs font-bold text-slate-900 uppercase">Export Readable Report</span>
             <FileSpreadsheet size={16} className="text-slate-300" />
           </button>
-          <button onClick={() => setShowResetConfirm(true)} className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors active:bg-slate-100">
+          <button type="button" onClick={() => setShowResetConfirm(true)} className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors active:bg-slate-100">
             <span className="text-xs font-bold text-red-500 uppercase">Reset All Data</span>
             <Trash2 size={16} className="text-red-300" />
           </button>
         </div>
       </SectionCard>
 
-      <section className="rounded-2xl border border-slate-100 bg-[var(--brand-card)] p-5 space-y-2">
-        <p className="text-xs font-semibold tracking-widest text-slate-400 uppercase">About</p>
-        <p className="text-sm font-bold text-slate-900">Version 1.0.0</p>
-        <p className="text-xs text-slate-400">Built by Abdel-Rahman to build A Man</p>
+      <section className="rounded-2xl border border-slate-100 bg-[var(--brand-card)] overflow-hidden">
+        <div className="p-5 space-y-2">
+          <p className="text-[11px] font-semibold tracking-[0.2em] text-slate-400">ABOUT</p>
+          <p className="text-sm font-bold text-slate-900">Version 1.0.0</p>
+          <p className="text-xs text-slate-400">Built by Abdel-Rahman to build A Man</p>
+        </div>
       </section>
 
       <Modal show={showResetConfirm} onClose={() => setShowResetConfirm(false)}>
@@ -532,8 +631,8 @@ export default function Settings({ settings: initialSettings }: Props) {
           <p className="text-xs text-slate-400 font-medium italic">This action is irreversible. All behavioral logs, prayers, and trainings will be permanently deleted.</p>
         </div>
         <div className="flex flex-col gap-3">
-          <button onClick={handleResetData} className="w-full py-4 bg-red-500 text-white rounded-2xl font-bold text-xs uppercase shadow-lg shadow-red-500/20 active:scale-95 transition-all">Clear Data</button>
-          <button onClick={() => setShowResetConfirm(false)} className="w-full py-4 bg-slate-100 text-slate-900 rounded-2xl font-bold text-xs uppercase active:scale-95 transition-all">Cancel</button>
+          <button type="button" onClick={handleResetData} className="w-full py-4 bg-red-500 text-white rounded-2xl font-bold text-xs uppercase shadow-lg shadow-red-500/20 active:scale-95 transition-all">Clear Data</button>
+          <button type="button" onClick={() => setShowResetConfirm(false)} className="w-full py-4 bg-slate-100 text-slate-900 rounded-2xl font-bold text-xs uppercase active:scale-95 transition-all">Cancel</button>
         </div>
       </Modal>
 
@@ -580,16 +679,16 @@ export default function Settings({ settings: initialSettings }: Props) {
             <p className="text-xs text-slate-400 font-bold leading-relaxed">Choose whether to merge these days with your current archive or replace the current archive completely.</p>
           </div>
           <div className="flex flex-col gap-3">
-            <button onClick={() => confirmImport('merge')} disabled={importing}
+            <button type="button" onClick={() => confirmImport('merge')} disabled={importing}
               className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-xs shadow-lg shadow-slate-900/20 active:scale-95 transition-all flex items-center justify-center gap-2">
               {importing ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
               Merge With Existing
             </button>
-            <button onClick={() => confirmImport('replace')} disabled={importing}
+            <button type="button" onClick={() => confirmImport('replace')} disabled={importing}
               className="w-full py-4 bg-red-500 text-white rounded-2xl font-bold text-xs shadow-lg shadow-red-500/20 active:scale-95 transition-all flex items-center justify-center gap-2">
               Replace All Data
             </button>
-            <button onClick={() => setImportPreview(null)} className="w-full py-4 bg-slate-50 text-slate-400 rounded-2xl font-bold text-xs uppercase active:scale-95 transition-all">Cancel</button>
+            <button type="button" onClick={() => setImportPreview(null)} className="w-full py-4 bg-slate-50 text-slate-400 rounded-2xl font-bold text-xs uppercase active:scale-95 transition-all">Cancel</button>
           </div>
         </Modal>
       )}
@@ -617,15 +716,25 @@ function ImportDropZone({ onImport }: Readonly<{ onImport: (file: File) => void 
     e.target.value = '';
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      inputRef.current?.click();
+    }
+  };
+
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label="Import data from JSON file"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
       onClick={() => inputRef.current?.click()}
+      onKeyDown={handleKeyDown}
       className={cn(
-        'w-full flex flex-col items-center justify-center gap-2 p-4 transition-all',
+        'w-full flex flex-col items-center justify-center gap-2 p-4 transition-all cursor-pointer',
         dragging ? 'bg-emerald-50' : 'hover:bg-slate-50 active:bg-slate-100'
       )}
     >
@@ -647,6 +756,6 @@ function ImportDropZone({ onImport }: Readonly<{ onImport: (file: File) => void 
           {dragging ? 'Release to load backup' : 'Drop .json file or tap to browse'}
         </p>
       </div>
-    </button>
+    </div>
   );
 }

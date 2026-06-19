@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { buildRelapseState, computeHistoryGrid, computeFrequencyCells, computeWeekdayTotals } from './relapsePresenter.ts';
+import { buildRelapseState, computeHistoryGrid, computeFrequencyCells, computeWeekdayTotals, type DayEntry } from './relapsePresenter.ts';
 import { TargetCard } from './TargetCard.tsx';
 import { HistoryGrid } from './HistoryGrid.tsx';
 import { StreakBars } from './StreakBars.tsx';
@@ -7,8 +7,8 @@ import { FrequencyGrid } from './FrequencyGrid.tsx';
 import type { PeriodType } from '../../hooks/useAnalyticsData.ts';
 
 interface RelapseDeepAnalysisProps {
-  activeData: any[];
-  allData?: any[];
+  activeData: DayEntry[];
+  allData?: DayEntry[];
   periodType: PeriodType;
   relapseTarget: number;
   firstWeekday: number;
@@ -19,9 +19,14 @@ export const RelapseDeepAnalysis = React.memo(function RelapseDeepAnalysis({
 }: RelapseDeepAnalysisProps) {
   const state = useMemo(() => buildRelapseState(activeData, relapseTarget, firstWeekday), [activeData, relapseTarget, firstWeekday]);
 
-  const fullHistoryGrid = useMemo(() => computeHistoryGrid(allData.length > 0 ? allData : activeData, firstWeekday), [allData, activeData, firstWeekday]);
+  const dataWithActivity = useMemo(() => {
+    const source = allData.length > 0 ? allData : activeData;
+    return source.filter((d: any) => d.relapseCount > 0 || d.prayers?.length > 0 || d.trainings?.length > 0 || d.weight != null);
+  }, [allData, activeData]);
 
-  const allDayData = allData.length > 0 ? allData : activeData;
+  const fullHistoryGrid = useMemo(() => computeHistoryGrid(dataWithActivity, firstWeekday), [dataWithActivity, firstWeekday]);
+
+  const allDayData = dataWithActivity.length > 0 ? dataWithActivity : activeData;
   const allFrequencyCells = useMemo(() => computeFrequencyCells(allDayData, firstWeekday), [allDayData, firstWeekday]);
   const allWeekdayTotals = useMemo(() => computeWeekdayTotals(allDayData, firstWeekday), [allDayData, firstWeekday]);
   const allMaxWeekday = Math.max(...allWeekdayTotals, 1);

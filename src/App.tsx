@@ -15,6 +15,7 @@ import { ToastContext, ToastProvider } from './components/layout/ToastProvider.t
 import { ErrorBoundary } from './components/layout/ErrorBoundary.tsx';
 import { NavBtn } from './components/layout/NavBtn.tsx';
 import { useNotifications } from './hooks/useNotifications.ts';
+import { usePersistentScreenTime } from './hooks/usePersistentScreenTime.ts';
 
 const DailyTracking = lazy(() => import('./pages/DailyTracking.tsx'));
 const Analytics     = lazy(() => import('./pages/Analytics.tsx'));
@@ -30,6 +31,7 @@ function AppInner() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   useNotifications(userSettings);
+  usePersistentScreenTime();
 
   const pageTabs = [
     { path: '/',       label: 'DAILY',     icon: <Home size={20} /> },
@@ -299,7 +301,7 @@ function Onboarding({
           </div>
         </div>
 
-        <button
+        <button type="button"
           onClick={() => { onFinish(); haptic.success(); }}
           className="w-full py-5 rounded-[2rem] bg-slate-900 text-white text-xs font-bold uppercase tracking-widest shadow-xl shadow-slate-900/20 active:scale-95 transition-all"
         >

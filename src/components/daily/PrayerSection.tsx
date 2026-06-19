@@ -34,17 +34,17 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
       const log = prayers[p];
       if (log?.status === 'prayed' || log?.status === 'missed' || log?.status === 'qada') continue;
       if (autoMissedRef.current.has(p)) continue;
-      const nextAdhan = getNextAdhan(p, prayerTimes);
-      if (nextAdhan && now > nextAdhan) {
+      const windowEnd = getWindowEnd(p, prayerTimes);
+      if (windowEnd && now > windowEnd) {
         autoMissedRef.current.add(p);
         offlineDb.savePrayer(dateStr, p, {
           name: p,
           status: 'missed',
           sunnah_flag: false,
-          actual_time: nextAdhan.toISOString(),
+          actual_time: windowEnd.toISOString(),
           target_time: prayerTimes[p]?.toISOString() ?? null,
           on_time: false,
-        });
+        }).catch((e) => console.error('[AutoMiss]', e));
       }
     }
   }, [tick, dateStr, prayers, prayerTimes]);
@@ -55,12 +55,12 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
       const time = prayerTimes[p];
       const log = prayers[p];
       if (log?.status === 'prayed' || log?.status === 'qada') continue;
-      const nextAdhan = getNextAdhan(p, prayerTimes);
+      const windowEnd = getWindowEnd(p, prayerTimes);
 
-      if (time && now > time && (!nextAdhan || now < nextAdhan)) {
-        if (nextAdhan) {
-          const diff = (nextAdhan.getTime() - now.getTime()) / 60000;
-          if (diff <= 15) return `${PRAYER_DISPLAY[p]} auto-misses at ${format(nextAdhan, 'hh:mm a')} — pray now.`;
+      if (time && now > time && (!windowEnd || now < windowEnd)) {
+        if (windowEnd) {
+          const diff = (windowEnd.getTime() - now.getTime()) / 60000;
+          if (diff <= 15) return `${PRAYER_DISPLAY[p]} auto-misses at ${format(windowEnd, 'hh:mm a')} — pray now.`;
         }
       }
     }
@@ -73,6 +73,12 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
   const [removingName, setRemovingName] = useState<PrayerName | null>(null);
 
   const autoSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const removingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    if (removingTimeoutRef.current) clearTimeout(removingTimeoutRef.current);
+  }, []);
 
   const autoSaveTime = useCallback((name: PrayerName, timeStr: string) => {
     if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
@@ -119,7 +125,7 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
 
     try {
       haptic[sunnah ? 'prayerSunnah' : 'prayerFard']();
-      offlineDb.savePrayer(dateStr, name, {
+      await offlineDb.savePrayer(dateStr, name, {
         name,
         status: 'prayed',
         sunnah_flag: sunnah,
@@ -136,7 +142,7 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
     const existing = prayers[name];
     if (existing?.status !== 'pending' && existing?.status !== undefined) return;
     const now = new Date();
-    offlineDb.savePrayer(dateStr, name, {
+    await offlineDb.savePrayer(dateStr, name, {
       name,
       status: 'missed',
       sunnah_flag: false,
@@ -147,21 +153,21 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
     haptic.light();
   };
 
-  const toggleSunnah = (name: PrayerName) => {
+  const toggleSunnah = async (name: PrayerName) => {
     const existing = prayers[name];
     if (existing?.status !== 'prayed' || !PRAYERS_WITH_SUNNAH.includes(name)) return;
-    offlineDb.savePrayer(dateStr, name, {
+    await offlineDb.savePrayer(dateStr, name, {
       ...existing,
       sunnah_flag: !existing.sunnah_flag,
     });
     haptic.light();
   };
 
-  const toggleQada = (name: PrayerName) => {
+  const toggleQada = async (name: PrayerName) => {
     const existing = prayers[name];
     if (existing?.status === 'prayed' || existing?.status === 'qada') return;
     const now = new Date();
-    offlineDb.savePrayer(dateStr, name, {
+    await offlineDb.savePrayer(dateStr, name, {
       name,
       status: 'qada',
       sunnah_flag: false,
@@ -185,18 +191,19 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
 
   const handleDelete = async (name: PrayerName) => {
     if (removingName === name) {
-      const day = offlineDb.getDay(dateStr);
+      const day = await offlineDb.getDay(dateStr);
       if (!day) return;
       const wasQada = day.prayers?.[name]?.status === 'qada';
       const newPrayers = { ...day.prayers };
       delete newPrayers[name];
-      offlineDb.updateDay(dateStr, { prayers: newPrayers });
+      await offlineDb.updateDay(dateStr, { prayers: newPrayers });
       if (wasQada) onQadaChange?.(Math.max(0, qadaCount - 1));
       setRemovingName(null);
       setEditingName(null);
     } else {
       setRemovingName(name);
-      setTimeout(() => setRemovingName(null), 2000);
+      if (removingTimeoutRef.current) clearTimeout(removingTimeoutRef.current);
+      removingTimeoutRef.current = setTimeout(() => setRemovingName(null), 2000);
     }
   };
 
@@ -225,9 +232,9 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
           const windowEnd = getWindowEnd(p, prayerTimes);
           const nextAdhan = getNextAdhan(p, prayerTimes);
           
-          const activeUntil = nextAdhan || windowEnd;
-          const isActive = time && now > time && (!activeUntil || now < activeUntil);
-          const isMissed = nextAdhan && now > nextAdhan && log?.status !== 'prayed' && log?.status !== 'qada';
+          const missTime = windowEnd || nextAdhan;
+          const isActive = time && now > time && (!missTime || now < missTime);
+          const isMissed = missTime && now > missTime && log?.status !== 'prayed' && log?.status !== 'qada';
           const isUpcoming = time && now < time;
           const isFardOnly = log?.status === 'prayed' && !log.sunnah_flag;
           const isFardSunnah = log?.status === 'prayed' && log.sunnah_flag;
@@ -282,7 +289,7 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
                      isActive ? 'ACTIVE' : 'UPCOMING'}
                   </div>
                   {log?.status === 'prayed' && PRAYERS_WITH_SUNNAH.includes(p) && (
-                    <button
+                    <button type="button"
                       onClick={(e) => { e.stopPropagation(); toggleSunnah(p); }}
                       className="p-1.5 rounded-full hover:bg-white/40 transition-colors"
                       aria-label={log.sunnah_flag ? 'Remove sunnah' : 'Add sunnah'}
@@ -306,7 +313,7 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
                       <div className="space-y-2">
                         <label htmlFor={`time-${p}`} className="text-xs font-semibold text-slate-400">Time</label>
                         <div className="flex items-center gap-2">
-                          <button
+                          <button type="button"
                             onClick={() => adjustTime(-5)}
                             className="p-2 rounded-xl bg-white border border-slate-200 text-slate-500 hover:bg-slate-100 active:scale-95 transition-all"
                             aria-label="Subtract 5 minutes"
@@ -323,7 +330,7 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
                             }}
                             className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-bold outline-none text-center tabular-nums"
                           />
-                          <button
+                          <button type="button"
                             onClick={() => adjustTime(5)}
                             className="p-2 rounded-xl bg-white border border-slate-200 text-slate-500 hover:bg-slate-100 active:scale-95 transition-all"
                             aria-label="Add 5 minutes"
@@ -334,13 +341,13 @@ export default function PrayerSection({ prayers, prayerTimes, dateStr, viewDate,
 
                       </div>
                       <div className="flex gap-2 items-center justify-between">
-                        <button
+                        <button type="button"
                           onClick={() => setEditingName(null)}
                           className="text-xs font-semibold text-slate-500 hover:text-slate-700 transition-colors"
                         >
                           Done
                         </button>
-                        <button
+                        <button type="button"
                           onClick={() => handleDelete(p)}
                           className={cn("text-red-400 text-xs font-semibold flex items-center gap-1 hover:text-red-600 transition-colors", removingName === p && "text-red-700")}
                         >
